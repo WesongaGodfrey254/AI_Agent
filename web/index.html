@@ -1,0 +1,319 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wesonga AI Assistant</title>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: rgb(100, 50, 60);
+      color: #edf4ff;
+    }
+
+    main {
+      max-width: 760px;
+      margin: auto;
+      padding: 24px 16px;
+    }
+
+    header, .composer {
+      background: wheat;
+      border: 1px solid #ccdbee;
+      border-radius: 16px;
+      padding: 18px;
+      text-align: center;
+    }
+
+    h1 { 
+      margin: 0 0 6px;
+      color: green;
+      font-family: aria-label, sans-serif;    
+    }
+    .muted { color: black; }
+
+    #chat {
+      min-height: 300px;
+      max-height: 55vh;
+      overflow-y: auto;
+      padding: 12px 0;
+    }
+
+    .message {
+      padding: 12px 14px;
+      margin: 10px 0;
+      border-radius: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user { background: #e0d31c; }
+    .assistant { background: #102a43; }
+
+    textarea {
+      width: 100%;
+      min-height: 70px;
+      resize: vertical;
+      border-radius: 10px;
+      padding: 12px;
+      font: inherit;
+      color: green;
+      background: white;
+      border: 1px solid #38506b;
+    }
+
+    button {
+      padding: 11px 15px;
+      border: 0;
+      border-radius: 10px;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      margin: 8px 6px 0 0;
+      background: #38bdf8;
+      color: #07111f;
+    }
+
+    button:disabled { opacity: .5; cursor: wait; }
+    #mic { background: #22c55e; }
+    #mic.listening { background: #fbbf24; }
+    #status { min-height: 24px; margin-top: 10px; }
+  </style>
+</head>
+
+<body>
+<main>
+  <header>
+    <h1>Wesonga AI</h1>
+    <div class="muted">Your personal research assistant</div>
+  </header>
+
+  <div id="chat" aria-live="polite">
+    <div class="message assistant">
+      Wesonga: Hello! Type a question or click the microphone to speak.
+    </div>
+  </div>
+
+  <section class="composer">
+    <form id="form">
+      <textarea id="message"
+        placeholder="Ask Wesonga a question..."></textarea>
+
+      <div>
+        <button id="send" type="submit">Send message</button>
+        <button id="mic" type="button">🎙 Speak</button>
+        <button id="stop" type="button">Stop voice</button>
+      </div>
+    </form>
+
+    <label>
+      <input type="checkbox" id="autoSpeak" checked>
+      Speak replies aloud
+    </label>
+
+    <div id="status" class="muted" role="status">
+      Ready
+    </div>
+  </section>
+</main>
+
+<script>
+  const chat = document.getElementById("chat");
+  const form = document.getElementById("form");
+  const input = document.getElementById("message");
+  const mic = document.getElementById("mic");
+  const send = document.getElementById("send");
+  const status = document.getElementById("status");
+  const autoSpeak = document.getElementById("autoSpeak");
+
+  const SpeechRecognition =
+    window.SpeechRecognition ||
+    window.webkitSpeechRecognition;
+
+  let recognition = null;
+  let listening = false;
+  let busy = false;
+
+  function addMessage(who, text, className) {
+    const div = document.createElement("div");
+    div.className = "message " + className;
+    div.textContent = who + ": " + text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function speak(text) {
+    if (!("speechSynthesis" in window)) {
+      status.textContent = "Speech playback is unavailable.";
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-KE";
+    utterance.rate = 1;
+
+    utterance.onstart = () => {
+      status.textContent = "Wesonga is speaking...";
+    };
+
+    utterance.onend = () => {
+      status.textContent = "Ready";
+    };
+
+    utterance.onerror = () => {
+      status.textContent = "Could not play the voice.";
+    };
+
+    window.speechSynthesis.speak(utterance);
+  }
+
+  async function askWesonga(text) {
+    if (!text.trim() || busy) return;
+
+    busy = true;
+    send.disabled = true;
+    mic.disabled = true;
+
+    addMessage("You", text, "user");
+    status.textContent = "Wesonga is thinking...";
+
+    try {
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text })
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Request failed.");
+      }
+
+      addMessage("Wesonga", data.answer, "assistant");
+
+      if (autoSpeak.checked) {
+        speak(data.answer);
+      } else {
+        status.textContent = "Ready";
+      }
+
+    } catch (error) {
+      addMessage("System", error.message, "assistant");
+      status.textContent = "Request failed";
+    } finally {
+      busy = false;
+      send.disabled = false;
+      mic.disabled = false;
+      input.focus();
+    }
+  }
+
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    const text = input.value.trim();
+
+    if (text) {
+      input.value = "";
+      askWesonga(text);
+    }
+  });
+
+
+  mic.addEventListener("click", () => {
+    if (!SpeechRecognition) {
+      status.textContent =
+        "Speech recognition is unavailable. Try Chrome.";
+      return;
+    }
+
+    if (listening) {
+      recognition.stop();
+      return;
+    }
+
+    let recognizedText = "";
+
+    recognition = new SpeechRecognition();
+
+    // Use a widely supported English locale for testing.
+    recognition.lang = "en-US";
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      listening = true;
+      mic.classList.add("listening");
+      mic.textContent = "Listening... click to stop";
+      status.textContent = "Speak now";
+    };
+
+    recognition.onresult = (event) => {
+      let finalText = "";
+      let interimText = "";
+
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        const text = result[0].transcript;
+
+        if (result.isFinal) {
+          finalText += text + " ";
+        } else {
+          interimText += text + " ";
+        }
+      }
+
+      recognizedText = (finalText + interimText).trim();
+      input.value = recognizedText;
+    };
+
+    recognition.onerror = (event) => {
+      status.textContent = "Microphone error: " + event.error;
+      console.error("Speech recognition error:", event.error);
+    };
+
+    recognition.onend = () => {
+      listening = false;
+      mic.classList.remove("listening");
+      mic.textContent = "🎙 Speak";
+
+      const question = recognizedText.trim();
+
+      if (question) {
+        input.value = "";
+        askWesonga(question);
+      } else {
+        status.textContent =
+          "No speech detected. Check microphone permissions and try again.";
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (error) {
+      status.textContent = "Could not start microphone: " + error.message;
+      console.error(error);
+    }
+  });
+
+
+  document.getElementById("stop").addEventListener("click", () => {
+    if (recognition && listening) recognition.stop();
+
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    status.textContent = "Voice stopped";
+  });
+</script>
+</body>
+</html>
