@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Local environments and data
+venv/
+.venv/
+data/
+*.log
+
+# Tooling
+.pytest_cache/
+.DS_Store

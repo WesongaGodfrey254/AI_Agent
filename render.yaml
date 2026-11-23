@@ -1,0 +1,28 @@
+# Render Blueprint for STA AI.
+# Secrets are never stored in this file: GOOGLE_API_KEY and GOOGLE_CLIENT_ID are
+# entered in the Render Dashboard when the Blueprint is deployed, and the
+# database connection string is injected by Render from the managed database.
+
+services:
+  - type: web
+    name: sta-ai
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sta-ai-db
+          property: connectionString
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+
+databases:
+  - name: sta-ai-db
+    plan: free
