@@ -50,7 +50,7 @@ from google.genai import types
 from google.oauth2 import id_token
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import AsyncConnectionPool, AsyncNullConnectionPool
 from pydantic import BaseModel, Field
 
 from agent import root_agent
@@ -82,6 +82,7 @@ if DATABASE_URL.startswith("postgres://"):
 # all hosts are accepted (useful for local development).
 TRUSTED_HOSTS = [host.strip() for host in (os.getenv("TRUSTED_HOSTS") or "").split(",") if host.strip()]
 COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "true").strip().lower() not in {"0", "false", "no", "off"})
+IS_VERCEL = bool(os.getenv("VERCEL"))
 
 APP_NAME = "weai"
 SESSION_COOKIE = "weai_session"
@@ -123,10 +124,11 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-_pool: AsyncConnectionPool | None = None
+_pool: AsyncConnectionPool | AsyncNullConnectionPool | None = None
+_pool_lock = asyncio.Lock()
 
 
-def pool() -> AsyncConnectionPool:
+def pool() -> AsyncConnectionPool | AsyncNullConnectionPool:
     if _pool is None:
         raise RuntimeError("Database connection pool is not initialised.")
     return _pool
@@ -141,17 +143,33 @@ async def db() -> AsyncIterator[AsyncConnection]:
 async def init_db() -> None:
     """Open the connection pool and create any missing tables."""
     global _pool
-    _pool = AsyncConnectionPool(
-        conninfo=DATABASE_URL,
-        kwargs={"row_factory": dict_row},
-        min_size=1,
-        max_size=10,
-        open=False,
-    )
-    await _pool.open(wait=True, timeout=30)
-    async with db() as connection:
-        for statement in SCHEMA_STATEMENTS:
-            await connection.execute(statement)
+    if _pool is not None:
+        return
+
+    async with _pool_lock:
+        if _pool is not None:
+            return
+
+        pool_kwargs: dict[str, Any] = {
+            "conninfo": DATABASE_URL,
+            "kwargs": {"row_factory": dict_row},
+            "open": False,
+        }
+        if IS_VERCEL:
+            # Serverless functions are stateless and may fan out; avoid holding
+            # idle connections across invocations.
+            _pool = AsyncNullConnectionPool(**pool_kwargs)
+        else:
+            _pool = AsyncConnectionPool(
+                **pool_kwargs,
+                min_size=1,
+                max_size=10,
+            )
+
+        await _pool.open(wait=True, timeout=30)
+        async with db() as connection:
+            for statement in SCHEMA_STATEMENTS:
+                await connection.execute(statement)
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +571,10 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next: Any) -> Response:
+    # Vercel serverless instances can receive requests before lifespan startup
+    # has completed in every execution context; ensure the DB is ready.
+    if _pool is None:
+        await init_db()
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")

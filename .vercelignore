@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+data/
+__pycache__/
+*.py[cod]
+*.log
+.pytest_cache/
+.DS_Store
+Dockerfile
+docker-compose.yml
+render.yaml
+migrate_sqlite_to_postgres.py

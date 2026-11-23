@@ -89,6 +89,33 @@ The schema is created automatically on startup. Uploaded files live in the `pgda
    uvicorn voice_app:app --reload
    ```
 
+## Deploying to Vercel
+
+This repo includes a Vercel Python/FastAPI entrypoint (`app.py`), `vercel.json`, and `.python-version`. Vercel runs the app as a serverless function, so you must use an **external PostgreSQL database** (Vercel Postgres/Neon/Supabase/Render Postgres, etc.).
+
+1. Push the repo to GitHub.
+2. In Vercel, **Add New → Project** and import `WesongaGodfrey254/AI_Agent`.
+3. Set **Framework Preset** to `Other` (or let Vercel detect Python). The root `app.py` exposes the FastAPI `app`.
+4. Add Environment Variables in Vercel Project Settings (never commit them):
+
+   | Variable | Value |
+   |---|---|
+   | `GOOGLE_API_KEY` | Your Gemini API key |
+   | `GOOGLE_CLIENT_ID` | Your Google OAuth Web client ID |
+   | `DATABASE_URL` | PostgreSQL connection string for your external DB |
+   | `COOKIE_SECURE` | `true` |
+
+5. Deploy. After the first deploy, copy your Vercel URL (e.g. `https://your-app.vercel.app`).
+6. In Google Cloud Console → OAuth client → **Authorised JavaScript origins**, add that exact Vercel HTTPS origin.
+7. Verify `https://your-app.vercel.app/api/health` returns `{"status":"ok"}`.
+
+**Vercel notes**
+
+- **Database**: Use a managed Postgres with enough connections/storage for your expected traffic. The app uses a serverless-friendly null connection pool on Vercel.
+- **Timeouts**: `vercel.json` sets `maxDuration` to 60s for `app.py`. Long Gemini/tool responses may still hit plan limits; upgrade/configure Vercel plan limits as needed.
+- **State**: Chat history/files are persisted in Postgres. ADK in-memory session cache is per serverless instance and may be rebuilt from DB on cold starts.
+- **Uploads**: Files are stored in Postgres BYTEA (no local disk needed), but keep Vercel request body limits in mind.
+
 ## Deploying to Render
 
 The repository includes a [Render Blueprint](https://render.com/docs/blueprint-spec) that provisions both the web service and a managed PostgreSQL database.
