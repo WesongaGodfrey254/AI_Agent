@@ -783,10 +783,12 @@
     <div id="loginStatus" class="login-status"></div>
     <div id="configHint" class="hint hidden">
       <strong>Google sign-in is not configured yet.</strong><br>
-      Create a Google OAuth “Web application” client, then add its client ID to
-      <code>.env</code> as <code>GOOGLE_CLIENT_ID=...</code>.
-      Add <code>http://localhost:8000</code> and
-      <code>http://127.0.0.1:8000</code> as authorised JavaScript origins.
+      Create a Google OAuth “Web application” client, then set its client ID as
+      <code>GOOGLE_CLIENT_ID</code> in the deployment environment (or in
+      <code>.env</code> locally).
+      Add this site’s exact origin (for example
+      <code>https://sta-ai.vercel.app</code>) and
+      <code>http://localhost:8000</code> as authorised JavaScript origins.
     </div>
   </div>
 </div>

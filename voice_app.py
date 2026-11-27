@@ -84,6 +84,17 @@ TRUSTED_HOSTS = [host.strip() for host in (os.getenv("TRUSTED_HOSTS") or "").spl
 COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "true").strip().lower() not in {"0", "false", "no", "off"})
 IS_VERCEL = bool(os.getenv("VERCEL"))
 
+if IS_VERCEL:
+    # Vercel only serves HTTPS, so a non-Secure session cookie would be a
+    # configuration mistake. Do not let an env var weaken it there.
+    COOKIE_SECURE = True
+    if not TRUSTED_HOSTS:
+        # Vercel sets VERCEL_URL on every deployment (production and previews).
+        # Trust that exact host rather than accepting arbitrary Host headers.
+        vercel_host = (os.getenv("VERCEL_URL") or "").strip().lower()
+        if vercel_host:
+            TRUSTED_HOSTS = [vercel_host]
+
 APP_NAME = "weai"
 SESSION_COOKIE = "weai_session"
 SESSION_LIFETIME_SECONDS = 30 * 24 * 60 * 60
@@ -579,6 +590,12 @@ async def security_headers(request: Request, call_next: Any) -> Response:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    if IS_VERCEL or request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
     return response
 
 

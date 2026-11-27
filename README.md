@@ -19,16 +19,20 @@ It is built with FastAPI, Google's Agent Development Kit (ADK), Gemini 2.5 Flash
 
 ```text
 AI_Agent-main/
+├── app.py                          # Vercel entrypoint (exports the FastAPI `app`)
 ├── agent.py                        # STA AI agent definition (Gemini + Google Search)
 ├── voice_app.py                    # FastAPI app: auth, chats, history, uploads, streaming
 ├── db_schema.py                    # Shared PostgreSQL schema
 ├── life_history.md                 # Background about the creator, used only when relevant
 ├── requirements.txt                # Python dependencies
+├── .python-version                 # Python version pinned for Vercel (3.12)
 ├── .env.example                    # Template of required environment variables (no secrets)
+├── vercel.json                     # Vercel function timeout configuration
 ├── Dockerfile                      # Production container image
 ├── docker-compose.yml              # Local app + PostgreSQL
 ├── render.yaml                     # Render Blueprint (web service + managed PostgreSQL)
 ├── migrate_sqlite_to_postgres.py   # One-off migration from the old SQLite database
+├── .github/workflows/ci.yml        # Secret guard + import smoke test
 ├── web/
 │   ├── index.html                  # STA AI single-page interface
 │   ├── sta-ai-logo.webp            # Logo used across the UI
@@ -49,8 +53,8 @@ cp .env.example .env
 | `GOOGLE_API_KEY` | Yes | Gemini API key from Google AI Studio / Google Cloud. |
 | `GOOGLE_CLIENT_ID` | Yes | OAuth **Web application** client ID for Google Identity Services. This value is public by design, but keep it in configuration rather than source code. |
 | `DATABASE_URL` | Yes | PostgreSQL connection string, e.g. `postgresql://user:password@host:5432/dbname`. |
-| `COOKIE_SECURE` | No | Defaults to `true`. Set to `false` only for local HTTP development if the browser will not store Secure cookies on `localhost`. |
-| `TRUSTED_HOSTS` | No | Optional comma-separated list of allowed Host headers, e.g. `sta-ai.onrender.com,localhost`. |
+| `COOKIE_SECURE` | No | Defaults to `true` and is forced to `true` on Vercel. Set to `false` only for local HTTP development if the browser will not store Secure cookies on `localhost`. |
+| `TRUSTED_HOSTS` | No | Comma-separated list of allowed Host headers. For Vercel use your exact host(s), e.g. `sta-ai.vercel.app,sta_ai.vercel.com`. When unset, Vercel automatically trusts its own `VERCEL_URL`; locally all hosts are accepted. |
 
 `GOOGLE_CLIENT_SECRET` is **not** used by this app (the browser receives an ID token and the server verifies it), so it should not be added to the deployment or committed anywhere.
 
@@ -89,32 +93,40 @@ The schema is created automatically on startup. Uploaded files live in the `pgda
    uvicorn voice_app:app --reload
    ```
 
-## Deploying to Vercel
+## Deploying to Vercel (public URL)
 
-This repo includes a Vercel Python/FastAPI entrypoint (`app.py`), `vercel.json`, and `.python-version`. Vercel runs the app as a serverless function, so you must use an **external PostgreSQL database** (Vercel Postgres/Neon/Supabase/Render Postgres, etc.).
+Vercel generates `*.vercel.app` hostnames with hyphens, so the project should be named **`sta-ai`** and its default public URL is **`https://sta-ai.vercel.app`**. An underscore hostname such as `sta_ai.vercel.com` is not a valid DNS hostname and is not Vercel-generated; it only works if you own that domain and add it as a custom domain. The configuration below accepts both names if you do.
 
-1. Push the repo to GitHub.
+This repo is already Vercel-ready: `app.py` exports the FastAPI `app`, `.python-version` pins Python 3.12, and `vercel.json` sets a 60-second function timeout. Vercel runs the app as a serverless function, so you must use an **external PostgreSQL database** (Neon/Supabase/Render Postgres/etc.). The Docker-only `db` hostname will not resolve there.
+
+1. Push the repo to GitHub (`git push origin main`).
 2. In Vercel, **Add New → Project** and import `WesongaGodfrey254/AI_Agent`.
-3. Set **Framework Preset** to `Other` (or let Vercel detect Python). The root `app.py` exposes the FastAPI `app`.
-4. Add Environment Variables in Vercel Project Settings (never commit them):
+3. Let Vercel detect the Python/FastAPI preset (or choose **Other**). No build command is required.
+4. Add these Environment Variables in **Project Settings → Environment Variables** (never commit them):
 
    | Variable | Value |
    |---|---|
-   | `GOOGLE_API_KEY` | Your Gemini API key |
-   | `GOOGLE_CLIENT_ID` | Your Google OAuth Web client ID |
-   | `DATABASE_URL` | PostgreSQL connection string for your external DB |
-   | `COOKIE_SECURE` | `true` |
+   | `GOOGLE_API_KEY` | Gemini API key from Google AI Studio / Google Cloud |
+   | `GOOGLE_CLIENT_ID` | Google OAuth **Web application** client ID |
+   | `DATABASE_URL` | External Postgres URL, e.g. `postgresql://user:password@host:5432/dbname?sslmode=require` |
+   | `COOKIE_SECURE` | `true` (also forced by the app on Vercel) |
+   | `TRUSTED_HOSTS` | `sta-ai.vercel.app,sta_ai.vercel.com` — list only the hosts you actually serve |
 
-5. Deploy. After the first deploy, copy your Vercel URL (e.g. `https://your-app.vercel.app`).
-6. In Google Cloud Console → OAuth client → **Authorised JavaScript origins**, add that exact Vercel HTTPS origin.
-7. Verify `https://your-app.vercel.app/api/health` returns `{"status":"ok"}`.
+   For preview deployments, either leave `TRUSTED_HOSTS` unset (the app then trusts Vercel's own `VERCEL_URL`) or add your preview hostnames to the list.
+
+5. Deploy and copy the URL from the dashboard.
+6. In Google Cloud Console → OAuth client → **Authorised JavaScript origins**, add the exact HTTPS origin(s): `https://sta-ai.vercel.app` (and `https://sta_ai.vercel.com` if used as a custom domain), plus `http://localhost:8000` for local development. No redirect URI is needed.
+7. Verify `https://sta-ai.vercel.app/api/health` returns `{"status":"ok"}` and that `/` shows the sign-in screen with a working Google button.
+
+**Custom domain:** In Vercel **Project Settings → Domains**, add `sta_ai.vercel.com` only if you control that domain, then update `TRUSTED_HOSTS` and the OAuth origins above to include it.
 
 **Vercel notes**
 
-- **Database**: Use a managed Postgres with enough connections/storage for your expected traffic. The app uses a serverless-friendly null connection pool on Vercel.
+- **Database**: Use a managed Postgres with enough connections/storage for your expected traffic. Add `?sslmode=require` to `DATABASE_URL`. The app uses a serverless-friendly null connection pool on Vercel.
 - **Timeouts**: `vercel.json` sets `maxDuration` to 60s for `app.py`. Long Gemini/tool responses may still hit plan limits; upgrade/configure Vercel plan limits as needed.
 - **State**: Chat history/files are persisted in Postgres. ADK in-memory session cache is per serverless instance and may be rebuilt from DB on cold starts.
 - **Uploads**: Files are stored in Postgres BYTEA (no local disk needed), but keep Vercel request body limits in mind.
+- **Security**: Session cookies are HttpOnly, SameSite=Lax and Secure; HSTS is added on HTTPS responses. `TRUSTED_HOSTS` rejects unexpected Host headers. The CI workflow fails if a `.env` file or obvious credential is committed.
 
 ## Deploying to Render
 
@@ -157,7 +169,9 @@ The script copies users, sessions (re-hashing the tokens), conversations, messag
 | "Google sign-in failed" | Client ID matches the origin; browser clock is correct. |
 | "GOOGLE_API_KEY is missing" | Add a valid Gemini API key to `.env` / Render environment. |
 | "DATABASE_URL is missing" | Add the PostgreSQL connection string, or deploy with the Blueprint so Render injects it. |
-| `/api/health` fails | Database is unreachable; check `DATABASE_URL`, network access and Postgres logs. |
+| `/api/health` fails on Vercel | `DATABASE_URL` is unreachable from Vercel; use an external Postgres URL with `?sslmode=require`, not the Docker `db` host. |
+| `400 Invalid host header` on Vercel | Add the exact hostname to `TRUSTED_HOSTS`, or leave it unset so Vercel's `VERCEL_URL` is trusted. |
+| Google button missing on Vercel | The exact HTTPS origin is in `GOOGLE_CLIENT_ID`'s authorised JavaScript origins and Vercel env vars were set for Production. |
 | Uploads fail | Each file must be 20 MB or smaller, and the database must have enough free storage. |
 | No answer is streamed | Check the application logs; the ADK/Gemini request may have failed. |
 | Old chat history is missing | Run `migrate_sqlite_to_postgres.py` against the new database. |
